@@ -1,0 +1,13 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model AppSnapshot {
+  id        String   @id @default("shared")
+  trips     Json
+  updatedAt DateTime @updatedAt
+}

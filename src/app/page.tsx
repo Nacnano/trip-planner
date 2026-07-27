@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   buildEqualSplits,
@@ -8,7 +8,6 @@ import {
   createSampleTrip,
   createTrip,
   formatMoney,
-  localStorageKey,
   parseTravelerNames,
   suggestSettlements,
   type ItineraryItem,
@@ -81,42 +80,65 @@ export default function Home() {
     useState<ExpenseFormState>(makeExpenseForm());
   const [message, setMessage] = useState("");
   const [expenseError, setExpenseError] = useState("");
+  const hasLoadedRef = useRef(false);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      const storedValue = window.localStorage.getItem(localStorageKey);
+    const abortController = new AbortController();
 
-      if (storedValue) {
-        try {
-          const parsedTrips = JSON.parse(storedValue) as Trip[];
-          const nextSelectedTrip = parsedTrips[0] ?? null;
+    async function loadTrips() {
+      try {
+        const response = await fetch("/api/trips", {
+          signal: abortController.signal,
+        });
 
-          setTrips(parsedTrips);
-          setSelectedTripId(nextSelectedTrip?.id ?? "");
-          setItineraryForm(emptyItineraryForm());
-          setExpenseForm(
-            makeExpenseForm(
-              nextSelectedTrip?.travelers.map((traveler) => traveler.id) ?? [],
-            ),
-          );
-          return;
-        } catch {
-          // Fall through to the starter trip.
+        if (!response.ok) {
+          throw new Error("Failed to load shared trips.");
         }
-      }
 
-      const starterTrip = createSampleTrip();
-      setTrips([starterTrip]);
-      setSelectedTripId(starterTrip.id);
-      setItineraryForm(emptyItineraryForm());
-      setExpenseForm(
-        makeExpenseForm(starterTrip.travelers.map((traveler) => traveler.id)),
-      );
-    });
+        const data = (await response.json()) as { trips: Trip[] };
+        const loadedTrips = data.trips.length > 0 ? data.trips : [createSampleTrip()];
+        const nextSelectedTrip = loadedTrips[0] ?? null;
+
+        setTrips(loadedTrips);
+        setSelectedTripId(nextSelectedTrip?.id ?? "");
+        setItineraryForm(emptyItineraryForm());
+        setExpenseForm(
+          makeExpenseForm(nextSelectedTrip?.travelers.map((traveler) => traveler.id) ?? []),
+        );
+        hasLoadedRef.current = true;
+      } catch {
+        if (abortController.signal.aborted) {
+          return;
+        }
+
+        const starterTrip = createSampleTrip();
+        setTrips([starterTrip]);
+        setSelectedTripId(starterTrip.id);
+        setItineraryForm(emptyItineraryForm());
+        setExpenseForm(makeExpenseForm(starterTrip.travelers.map((traveler) => traveler.id)));
+        hasLoadedRef.current = true;
+      }
+    }
+
+    void loadTrips();
+
+    return () => {
+      abortController.abort();
+    };
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(localStorageKey, JSON.stringify(trips));
+    if (!hasLoadedRef.current) {
+      return;
+    }
+
+    void fetch("/api/trips", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ trips }),
+    });
   }, [trips]);
 
   const selectedTrip = useMemo(
@@ -399,8 +421,8 @@ export default function Home() {
                   value={selectedTrip ? "Live" : "Waiting"}
                 />
                 <InfoTile label="Split mode" value="Equal + manual" />
-                <InfoTile label="Storage" value="Local only" />
-                <InfoTile label="Mode" value="Single page" />
+                <InfoTile label="Storage" value="Shared database" />
+                <InfoTile label="Mode" value="Live sync" />
               </div>
             </div>
           </div>
